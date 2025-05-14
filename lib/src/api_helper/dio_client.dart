@@ -1,13 +1,10 @@
 // Dart imports:
 import 'dart:io';
 
+import 'package:dio_http_formatter/dio_http_formatter.dart';
 // Flutter imports:
 import 'package:flutter/foundation.dart';
-
-// Package imports:
-import 'package:dio/dio.dart';
-import 'package:dio_http_formatter/dio_http_formatter.dart';
-
+import 'package:master_utility/master_utility.dart';
 // Project imports:
 import 'package:master_utility/src/api_helper/interceptor/authorization.dart';
 import 'package:master_utility/src/api_helper/interceptor/curl_logger.dart';
@@ -16,6 +13,7 @@ DioClient dioClient = DioClient();
 
 class DioClient {
   Dio? _dio;
+  RefreshTokenConfiguration? _refreshTokenConfiguration;
 
   Dio getDioClient({
     bool isAuth = true,
@@ -28,13 +26,13 @@ class DioClient {
 
     final interceptors = <Interceptor>[];
 
-    if (isAuth) {
+    /// This will load access token from [PreferenceHelper]
+    if (_refreshTokenConfiguration == null && isAuth) {
       interceptors.add(AuthTokenInterceptor());
     }
 
     if (_isApiLogVisible) {
-      interceptors.add(
-          HttpFormatter(loggingFilter: (request, response, error) => true));
+      interceptors.add(HttpFormatter(loggingFilter: (request, response, error) => true));
       interceptors.add(CurlLoggerDioInterceptor(printOnSuccess: true));
     }
 
@@ -42,9 +40,37 @@ class DioClient {
       InterceptorsWrapper(onError: callback),
     );
 
+    if (_refreshTokenConfiguration != null) {
+      _addJWTInterceptor(_refreshTokenConfiguration!);
+    }
+
     _dio?.interceptors.addAll(interceptors);
 
     return _dio!;
+  }
+
+  DioClient setRefreshTokenConfiguration({
+    required RefreshTokenConfiguration refreshTokenConfiguration,
+  }) {
+    _refreshTokenConfiguration = refreshTokenConfiguration;
+    _addJWTInterceptor(refreshTokenConfiguration);
+    return this;
+  }
+
+  void _addJWTInterceptor(RefreshTokenConfiguration config) {
+    _dio?.interceptors.add(
+      JwtHeroInterceptor(
+        tokenStorage: config.tokenStorage,
+        baseClient: _dio ?? Dio(),
+        onRefresh: (refreshClient, refreshToken) async {
+          refreshClient.options = refreshClient.options.copyWith(headers: {config.refreshTokenHeaderKey: refreshToken});
+          final response = await refreshClient.post(config.refreshTokenEndPoint);
+          final token = config.responseMapper(response.data);
+          return token;
+        },
+        sessionManager: config.sessionManager,
+      ),
+    );
   }
 
   DioClient setConfiguration(
